@@ -409,7 +409,11 @@ pre { height: 58vh; margin: 0; padding: 18px; overflow: auto; border: 1px solid 
 .cloud-panel { margin-bottom: 20px; min-width: 0; }
 .cloud-toolbar, .cloud-actions { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; }
 .cloud-toolbar label { min-width: 180px; }
-.cloud-toolbar label:nth-child(2) { flex: 1; }
+.cloud-search-group { display: flex; flex: 0 1 380px; max-width: 100%; align-items: end; gap: 10px; }
+.cloud-search-group > label { flex: 1; min-width: 0; }
+.cloud-refresh-button { flex: 0 0 44px; width: 44px; height: 44px; min-height: 44px; border: 1px solid #c8daf5; border-radius: 11px; color: #245ca8; background: #e8f1ff; }
+.cloud-refresh-button:hover { color: #174985; background: #d9e9ff; }
+html[data-theme="dark"] .cloud-toolbar .cloud-refresh-button, html[data-theme="dark"] .cloud-toolbar .cloud-refresh-button:hover { color: #94c2ff; background: #1c3553; border-color: #385a84; }
 .cloud-actions { align-items: center; margin: 16px 0; }
 .cloud-actions select { width: 112px; }
 .cloud-select-all { display: flex; gap: 7px; align-items: center; }
@@ -422,7 +426,7 @@ pre { height: 58vh; margin: 0; padding: 18px; overflow: auto; border: 1px solid 
 [data-cloud-jobs] summary { cursor: pointer; font-weight: 650; }
 .cloud-job-items { max-height: 340px; overflow: auto; color: var(--muted); padding-left: 22px; font-size: .82rem; }
 .cloud-job-items li { padding: 5px 0; }
- .cloud-machine-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 460px), 1fr)); gap: 18px; margin-top: 18px; }
+ .cloud-machine-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 500px), 560px)); gap: 18px; margin-top: 18px; }
 .cloud-machine-card { min-width: 0; padding: 20px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface-solid); }
 .cloud-machine-card.is-selected { border-color: var(--blue-strong); box-shadow: 0 0 0 2px var(--blue-soft); }
 .cloud-machine-head { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
@@ -447,7 +451,15 @@ pre { height: 58vh; margin: 0; padding: 18px; overflow: auto; border: 1px solid 
 .cloud-machine-section:last-child dl { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .cloud-machine-section:last-child dl > div { display: flex; flex-direction: column; gap: 5px; }
 .cloud-machine-section:last-child dd > span { text-align: left; }
-.cloud-machine-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 18px; margin-top: 16px; padding-top: 10px; border-top: 1px solid var(--line); }
+.cloud-machine-head > .cloud-machine-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; }
+.cloud-machine-icon { width: 44px; height: 44px; min-height: 44px; border: 1px solid; border-radius: 11px; }
+.cloud-machine-icon-open { color: #245ca8; background: #e8f1ff; border-color: #c8daf5; }
+.cloud-machine-icon-open:hover { color: #174985; background: #d9e9ff; }
+.cloud-machine-icon-resume { color: #237445; background: #e9f7ee; border-color: #c5e5cf; }
+.cloud-machine-icon-resume:hover { color: #195d35; background: #d8efdf; }
+.cloud-machine-icon svg { display: block; flex: none; }
+html[data-theme="dark"] .cloud-machine-actions .cloud-machine-icon-open, html[data-theme="dark"] .cloud-machine-actions .cloud-machine-icon-open:hover { color: #94c2ff; background: #1c3553; border-color: #385a84; }
+html[data-theme="dark"] .cloud-machine-actions .cloud-machine-icon-resume, html[data-theme="dark"] .cloud-machine-actions .cloud-machine-icon-resume:hover { color: #8bdba8; background: #203d2d; border-color: #3c654b; }
 .cloud-machine-config-state { display: flex; align-items: center; gap: 10px; margin-top: 12px; color: var(--muted); font-size: .76rem; }
 .cloud-machine-config-state.error { color: var(--red); }
 @media (max-width: 480px) {

@@ -34,6 +34,8 @@ type Profile struct {
 	UserID, TenantID                                                int64
 	UserEID, SecretKey, CommonLoginReqHeader, UserName, MobilePhone string
 	BondedDevice                                                    bool
+	NeedSmsValidate, NeedBindVirtualMfa, NeedUpdatePassword         bool
+	TwoFaValidateType                                               int
 }
 type Desktop struct {
 	ObjectType    int      `json:"objType"`
@@ -365,6 +367,8 @@ func (c *Client) Login(ctx context.Context) (Profile, error) {
 			UserID, TenantID                                                int64
 			UserEid, SecretKey, CommonLoginReqHeader, UserName, Mobilephone string
 			BondedDevice                                                    bool
+			NeedSmsValidate, NeedBindVirtualMfa, NeedUpdatePassword         bool
+			TwoFaValidateType                                               int
 		}
 		e = c.do(ctx, "POST", PCOrigin+"/api/auth/client/login", strings.NewReader(form.Encode()), h, &d)
 		if e != nil {
@@ -376,7 +380,7 @@ func (c *Client) Login(ctx context.Context) (Profile, error) {
 			last = errors.New("登录响应缺少鉴权字段")
 			continue
 		}
-		p := Profile{d.UserID, d.TenantID, d.UserEid, d.SecretKey, d.CommonLoginReqHeader, d.UserName, d.Mobilephone, d.BondedDevice}
+		p := Profile{UserID: d.UserID, TenantID: d.TenantID, UserEID: d.UserEid, SecretKey: d.SecretKey, CommonLoginReqHeader: d.CommonLoginReqHeader, UserName: d.UserName, MobilePhone: d.Mobilephone, BondedDevice: d.BondedDevice, NeedSmsValidate: d.NeedSmsValidate, NeedBindVirtualMfa: d.NeedBindVirtualMfa, NeedUpdatePassword: d.NeedUpdatePassword, TwoFaValidateType: d.TwoFaValidateType}
 		c.Profile = &p
 		return p, nil
 	}

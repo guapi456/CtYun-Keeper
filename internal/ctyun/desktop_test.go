@@ -3,6 +3,7 @@ package ctyun
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/url"
@@ -55,6 +56,30 @@ func TestDesktopConfigurationRejectsUnusableResponses(t *testing.T) {
 		})
 		if _, err := c.DesktopConfiguration(context.Background(), Desktop{DesktopID: "123"}); err == nil {
 			t.Fatalf("bad configuration accepted: %s", body)
+		}
+	}
+}
+
+func TestDesktopConfigurationMirrorTypeRepresentations(t *testing.T) {
+	for _, value := range []string{`30`, `"30"`, `" 30 "`} {
+		var cfg DesktopConfiguration
+		if err := json.Unmarshal([]byte(`{"cpuCore":8,"mirrorType":`+value+`}`), &cfg); err != nil {
+			t.Fatal(value, err)
+		}
+		if cfg.MirrorSource() != "用户自传镜像" || cfg.CPUCore == nil || *cfg.CPUCore != 8 {
+			t.Fatal(value, cfg)
+		}
+	}
+	for _, value := range []string{`null`, `""`} {
+		var cfg DesktopConfiguration
+		if err := json.Unmarshal([]byte(`{"mirrorType":`+value+`}`), &cfg); err != nil || cfg.MirrorType != nil {
+			t.Fatal(value, cfg, err)
+		}
+	}
+	for _, value := range []string{`"public"`, `true`, `{}`, `30.5`, `-1`, `"-1"`} {
+		var cfg DesktopConfiguration
+		if err := json.Unmarshal([]byte(`{"mirrorType":`+value+`}`), &cfg); err == nil {
+			t.Fatal("invalid mirror type accepted", value)
 		}
 	}
 }

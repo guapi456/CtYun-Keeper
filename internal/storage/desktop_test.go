@@ -26,6 +26,35 @@ func TestPowerJobRestartNeverReplaysRequests(t *testing.T) {
 		t.Fatal(j, err)
 	}
 }
+
+func TestPowerJobReadsAccountDisplayNameAndRetainsDeletedAccountHistory(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if _, err = s.DB.Exec("INSERT INTO accounts(id,name,username,password_encrypted,device_code,created_at,updated_at) VALUES(1,'显示名称','u','p','d','n','n')"); err != nil {
+		t.Fatal(err)
+	}
+	id, err := s.AddPowerJob("poweron", []PowerTarget{{1, "desktop"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := s.PowerJob(id)
+	if err != nil || job.Items[0].AccountName != "显示名称" {
+		t.Fatal(job, err)
+	}
+	s.DB.Exec("UPDATE accounts SET name='新名称' WHERE id=1")
+	job, err = s.PowerJob(id)
+	if err != nil || job.Items[0].AccountName != "新名称" {
+		t.Fatal(job, err)
+	}
+	s.DB.Exec("DELETE FROM accounts WHERE id=1")
+	job, err = s.PowerJob(id)
+	if err != nil || len(job.Items) != 1 || job.Items[0].AccountName != "" || job.Items[0].AccountID != 1 {
+		t.Fatal(job, err)
+	}
+}
 func TestDesktopHoldPersistenceAndExpiry(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "test.db")
 	s, err := Open(path)

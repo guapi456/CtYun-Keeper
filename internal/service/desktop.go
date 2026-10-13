@@ -163,32 +163,79 @@ func (m *Manager) desktopHoldScheduler() {
 	}
 }
 
-func (m *Manager) DesktopBrowser(ctx context.Context, t storage.PowerTarget) (string, error) {
+type DesktopBrowserLogin struct {
+	Target      storage.PowerTarget
+	URL         string
+	Profile     ctyun.Profile
+	DeviceCode  string
+	UserAccount string
+}
+
+const desktopBrowserHoldReason = "网页桌面使用中，关闭页面后自动恢复"
+
+func (m *Manager) RenewDesktopBrowser(t storage.PowerTarget) error {
+	m.desktopControlMu.Lock()
+	defer m.desktopControlMu.Unlock()
+	_, err := m.store.DB.Exec("UPDATE desktop_holds SET until_unix=MAX(until_unix,?) WHERE account_id=? AND desktop_id=? AND reason=?", time.Now().Add(150*time.Second).Unix(), t.AccountID, t.DesktopID, desktopBrowserHoldReason)
+	return err
+}
+
+func (m *Manager) ResumeDesktopBrowser(t storage.PowerTarget) error {
 	m.desktopControlMu.Lock()
 	defer m.desktopControlMu.Unlock()
 	m.mu.RLock()
 	busy := m.powerActive != 0 || m.maintenance
 	m.mu.RUnlock()
 	if busy {
-		return "", errors.New("电源操作或系统更新正在执行，请稍后打开桌面")
+		return errors.New("电源操作或系统更新正在执行")
 	}
-	_, values, _, err := m.desktopClient(ctx, t.AccountID)
+	result, err := m.store.DB.Exec("DELETE FROM desktop_holds WHERE account_id=? AND desktop_id=? AND reason=?", t.AccountID, t.DesktopID, desktopBrowserHoldReason)
 	if err != nil {
-		return "", err
+		return err
+	}
+	changed, err := result.RowsAffected()
+	if err == nil && changed > 0 {
+		m.resetDesktopSessions(t.AccountID)
+	}
+	return err
+}
+
+func (m *Manager) DesktopBrowser(ctx context.Context, t storage.PowerTarget) (string, error) {
+	login, err := m.DesktopBrowserLogin(ctx, t)
+	return login.URL, err
+}
+func (m *Manager) DesktopBrowserLogin(ctx context.Context, t storage.PowerTarget) (DesktopBrowserLogin, error) {
+	m.desktopControlMu.Lock()
+	defer m.desktopControlMu.Unlock()
+	m.mu.RLock()
+	busy := m.powerActive != 0 || m.maintenance
+	m.mu.RUnlock()
+	if busy {
+		return DesktopBrowserLogin{}, errors.New("电源操作或系统更新正在执行，请稍后打开桌面")
+	}
+	c, values, _, err := m.desktopClient(ctx, t.AccountID)
+	if err != nil {
+		return DesktopBrowserLogin{}, err
 	}
 	for _, d := range values {
 		if d.ID() == t.DesktopID {
-			if d.Forbidden {
-				return "", errors.New("平台禁止连接此云机")
+			if c.Profile == nil || !c.Profile.BondedDevice {
+				return DesktopBrowserLogin{}, errors.New("请先完成该账号的设备验证")
 			}
-			if err = m.store.SetDesktopHold(t, time.Now().Add(time.Hour).Unix(), "网页桌面使用中，保活暂停 60 分钟"); err != nil {
-				return "", err
+			if c.Profile.NeedSmsValidate || c.Profile.NeedBindVirtualMfa || c.Profile.NeedUpdatePassword || c.Profile.TwoFaValidateType == 5 {
+				return DesktopBrowserLogin{}, errors.New("平台要求额外登录验证，请先在官方客户端完成验证")
+			}
+			if d.Forbidden {
+				return DesktopBrowserLogin{}, errors.New("平台禁止连接此云机")
+			}
+			if err = m.store.SetDesktopHold(t, time.Now().Add(3*time.Minute).Unix(), desktopBrowserHoldReason); err != nil {
+				return DesktopBrowserLogin{}, err
 			}
 			m.resetDesktopSessions(t.AccountID)
-			return d.WebURL(), nil
+			return DesktopBrowserLogin{Target: t, URL: d.WebURL(), Profile: *c.Profile, DeviceCode: c.DeviceCode, UserAccount: c.Username}, nil
 		}
 	}
-	return "", errors.New("云机不存在或不属于该账号")
+	return DesktopBrowserLogin{}, errors.New("云机不存在或不属于该账号")
 }
 func (m *Manager) ResumeDesktop(ctx context.Context, t storage.PowerTarget) error {
 	m.desktopControlMu.Lock()

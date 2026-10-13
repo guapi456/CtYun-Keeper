@@ -10,6 +10,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -34,6 +35,39 @@ type DesktopConfiguration struct {
 	CreateDate    *float64 `json:"createDate"`
 	NowDate       *float64 `json:"nowDate"`
 	ExpireDate    *float64 `json:"expireDate"`
+}
+
+var errDesktopMirrorType = errors.New("配置接口字段 data.mirrorType 必须为非负整数或数字字符串")
+
+func (cfg *DesktopConfiguration) UnmarshalJSON(raw []byte) error {
+	type plainConfiguration DesktopConfiguration
+	var decoded plainConfiguration
+	fields := struct {
+		*plainConfiguration
+		MirrorType json.RawMessage `json:"mirrorType"`
+	}{plainConfiguration: &decoded}
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return err
+	}
+	value := strings.TrimSpace(string(fields.MirrorType))
+	if value != "" && value != "null" {
+		if strings.HasPrefix(value, `"`) {
+			var text string
+			if err := json.Unmarshal(fields.MirrorType, &text); err != nil {
+				return errDesktopMirrorType
+			}
+			value = strings.TrimSpace(text)
+		}
+		if value != "" {
+			kind, err := strconv.Atoi(value)
+			if err != nil || kind < 0 {
+				return errDesktopMirrorType
+			}
+			decoded.MirrorType = &kind
+		}
+	}
+	*cfg = DesktopConfiguration(decoded)
+	return nil
 }
 
 func (cfg DesktopConfiguration) Specification() string {
@@ -88,6 +122,13 @@ func (c *Client) DesktopConfiguration(ctx context.Context, d Desktop) (DesktopCo
 		Encrypted string                `json:"edata"`
 	}
 	if err = json.Unmarshal(raw, &envelope); err != nil {
+		if errors.Is(err, errDesktopMirrorType) {
+			return empty, err
+		}
+		var fieldError *json.UnmarshalTypeError
+		if errors.As(err, &fieldError) {
+			return empty, fmt.Errorf("配置接口字段 %s 类型不兼容（HTTP %d）", fieldError.Field, response.StatusCode)
+		}
 		return empty, fmt.Errorf("配置接口响应格式无效（HTTP %d）", response.StatusCode)
 	}
 	if envelope.Encrypted != "" {

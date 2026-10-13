@@ -4,7 +4,7 @@
  const find = s => document.querySelector(s);
  const csrf = document.querySelector('meta[name="csrf-token"]')?.content || '';
  const accounts = [...find('[data-cloud-account]').options].filter(o => o.value).map(o => ({id:Number(o.value),name:o.textContent}));
- let desktops = [], page = 1, loading = false, polling = false;
+ let desktops = [], page = 1, loading = false, polling = false, holdRevision = 0;
  const selected = new Map();
  const key = d => `${d.account_id}:${d.id}`;
  const labels = {poweron:'开机',shutdown:'关机',reboot:'重启'};
@@ -22,6 +22,12 @@
   return desktops.filter(d => (!account || String(d.account_id)===account) && (!query || `${d.name} ${d.id} ${d.account_name}`.toLowerCase().includes(query)));
  };
  const button = (text, callback) => {const b=document.createElement('button');b.type='button';b.className='cloud-text-button';b.textContent=text;b.addEventListener('click',callback);return b;};
+ const iconButton=(label,icon,callback)=>{
+  const b=button('',callback);b.className=`icon-button cloud-machine-icon cloud-machine-icon-${icon}`;b.title=label;b.setAttribute('aria-label',label);
+  const paths={open:'<path d="M10 5H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-6M8 22h8M12 19v3M14 2h8v8M22 2 12 12"/>',resume:'<path d="M6 3v5M12 3v5M3 8h12v3a6 6 0 0 1-12 0V8ZM9 17v4"/><circle cx="18" cy="17" r="5" fill="currentColor" stroke="none"/><path d="m15.5 17 1.7 1.7 3.3-3.4" stroke="#fff" stroke-width="2"/>'};
+  b.innerHTML=`<svg width="27" height="27" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[icon]}</svg>`;
+  return b;
+ };
  const updateSelection = () => {
   find('[data-cloud-selection]').textContent=`已选 ${selected.size} 台`;
   const values=filtered().filter(d=>!d.forbidden),count=values.filter(d=>selected.has(key(d))).length;
@@ -55,7 +61,7 @@
   if(d.detailState==='error'){const message=document.createElement('span');message.textContent=`读取失败：${d.detailError}`;status.append(message,button('重试读取',()=>{d.detailState=undefined;d.detailError='';queueDetails();}));}
   else if(!cfg)status.textContent=d.detailState==='loading'?'正在读取配置…':'配置等待加载…';
   status.hidden=!!cfg;
-  const actions=card.querySelector('.cloud-machine-actions');actions.replaceChildren();const open=button('打开桌面',()=>openDesktop(d));open.disabled=d.forbidden;actions.append(open);if(d.hold)actions.append(button('恢复连接',()=>resume(d)));
+  const actions=card.querySelector('.cloud-machine-actions');actions.replaceChildren();const open=iconButton('打开桌面','open',()=>openDesktop(d));open.disabled=d.forbidden;actions.append(open);if(d.hold)actions.append(iconButton('恢复连接','resume',()=>resume(d)));
   card.classList.toggle('is-selected',selected.has(key(d)));
  };
  const updateCard=d=>{const card=cardNodes.get(key(d));if(card)fillCard(card,d);};
@@ -86,8 +92,9 @@
    const check=document.createElement('input');check.type='checkbox';check.setAttribute('aria-label',`选择 ${d.name}`);
    check.addEventListener('change',()=>{if(check.checked)selected.set(key(d),{account_id:d.account_id,desktop_id:d.id});else selected.delete(key(d));card.classList.toggle('is-selected',check.checked);updateSelection();});
    const title=document.createElement('div');const h=document.createElement('h2');const small=document.createElement('small');small.className='cloud-machine-account';title.append(h,small);
-   const state=document.createElement('span');state.className='cloud-machine-state';head.append(check,title,state);
-   const hold=document.createElement('p');hold.className='cloud-machine-hold';const body=document.createElement('div');body.className='cloud-machine-sections';const status=document.createElement('div');status.className='cloud-machine-config-state';status.setAttribute('role','status');const actions=document.createElement('footer');actions.className='cloud-machine-actions';card.append(head,hold,body,status,actions);host.append(card);cardNodes.set(key(d),card);fillCard(card,d);
+   const actions=document.createElement('div');actions.className='cloud-machine-actions';
+   const state=document.createElement('span');state.className='cloud-machine-state';head.append(check,title,actions,state);
+   const hold=document.createElement('p');hold.className='cloud-machine-hold';const body=document.createElement('div');body.className='cloud-machine-sections';const status=document.createElement('div');status.className='cloud-machine-config-state';status.setAttribute('role','status');card.append(head,hold,body,status);host.append(card);cardNodes.set(key(d),card);fillCard(card,d);
   }
   if(!values.length){const empty=document.createElement('p');empty.className='muted';empty.textContent=loading?'正在查询…':'暂无云机';host.append(empty);}
   find('[data-cloud-page]').textContent=`第 ${page} / ${pages} 页 · 共 ${values.length} 台`;
@@ -111,13 +118,29 @@
   if(!Number.isFinite(value)||value<=0)return '未提供';const date=new Date(value);
   return Number.isNaN(date.getTime())?'未提供':date.toLocaleString('zh-CN',{hour12:false});
  };
+ let holdPolling=false,holdTimer;
+ const syncHolds=async()=>{
+  if(holdPolling)return;
+  if(loading){clearTimeout(holdTimer);holdTimer=setTimeout(syncHolds,5000);return;}
+  holdPolling=true;clearTimeout(holdTimer);
+  const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),4000);
+  const revision=holdRevision,generation=detailGeneration;
+  try{
+   const values=await request('/api/desktops/holds',undefined,controller.signal);
+   if(loading||revision!==holdRevision||generation!==detailGeneration)return;
+   const holds=new Map(values.map(item=>[`${item.account_id}:${item.desktop_id}`,item.hold]));
+   for(const d of desktops){const hold=holds.get(key(d))||'';if((d.hold||'')!==hold){d.hold=hold;updateCard(d);}}
+  }catch(_){}finally{clearTimeout(timeout);holdPolling=false;holdTimer=setTimeout(syncHolds,5000);}
+ };
+ document.addEventListener('visibilitychange',()=>{if(!document.hidden)void syncHolds();});
+ window.addEventListener('focus',()=>void syncHolds());
  const openDesktop=async d=>{
-  if(!confirm(`打开 ${d.name} 的官方网页桌面？需要在官方页面登录对应账号。该云机保活暂停 60 分钟；本账号正在运行的登录/时长任务会中止。`))return;
+  if(!confirm(`打开 ${d.name} 的官方网页桌面？将自动带入该账号的登录态。使用网页桌面期间暂停保活，关闭后自动恢复；本账号正在运行的登录/时长任务会中止。`))return;
   const popup=window.open('about:blank','_blank');if(!popup){notice('请允许弹出窗口后重试');return;}
   popup.opener=null;
-  try{const result=await request('/api/desktops/open',{account_id:d.account_id,desktop_id:d.id});const url=new URL(result.url);if(url.origin!=='https://pc.ctyun.cn')throw new Error('桌面地址无效');popup.location.replace(url.href);d.hold='网页桌面使用中，保活暂停 60 分钟';render();notice('已打开官方网页桌面');}catch(e){popup.close();notice(e.message);}
+  try{const result=await request('/api/desktops/open',{account_id:d.account_id,desktop_id:d.id});const url=new URL(result.url,window.location.origin);if(url.origin!==window.location.origin||!url.pathname.startsWith('/desktop-view/'))throw new Error('桌面地址无效');if(!result.entry_key)throw new Error('桌面入口验证信息缺失');const form=popup.document.createElement('form');form.method='POST';form.action=url.href;const input=popup.document.createElement('input');input.type='hidden';input.name='entry_key';input.value=result.entry_key;form.append(input);popup.document.body.replaceChildren(form);form.submit();d.hold='网页桌面使用中，关闭页面后自动恢复';render();notice('已打开官方网页桌面');holdRevision++;void syncHolds();}catch(e){popup.close();notice(e.message);}
  };
- const resume=async d=>{try{await request('/api/desktops/resume',{account_id:d.account_id,desktop_id:d.id});d.hold='';render();notice('已解除暂停，将按账号保活配置恢复连接');}catch(e){notice(e.message);}};
+ const resume=async d=>{try{await request('/api/desktops/resume',{account_id:d.account_id,desktop_id:d.id});holdRevision++;d.hold='';render();notice('已解除暂停，将按账号保活配置恢复连接');}catch(e){notice(e.message);}};
  let jobTimer,jobsSnapshot;
  const loadJobs=async()=>{
   if(polling)return;polling=true;clearTimeout(jobTimer);let nextRefresh=5000;
@@ -132,7 +155,7 @@
     const summary=document.createElement('summary');const count=s=>j.items.filter(i=>i.status===s).length;
     summary.textContent=`#${j.id} ${labels[j.action]||j.action} · ${j.items.length} 台 · 接受 ${count('accepted')} / 失败 ${count('failed')} / 待核对 ${count('unknown')} · ${j.status==='running'?'执行中':j.status==='finished'?'队列已结束':'已中断'}`;
     details.append(summary);const list=document.createElement('ul');list.className='cloud-job-items';
-    for(const item of j.items){const li=document.createElement('li');li.textContent=`账号 #${item.account_id} / ${item.name||item.desktop_id}：${statuses[item.status]||item.status} · ${item.message}`;list.append(li);}
+    for(const item of j.items){const li=document.createElement('li');li.textContent=`${item.account_name||`已删除账号（#${item.account_id}）`} / ${item.name||item.desktop_id}：${statuses[item.status]||item.status} · ${item.message}`;list.append(li);}
     details.append(list);host.append(details);if(old)list.scrollTop=old.scroll;
    }
   }catch(e){jobsSnapshot=undefined;find('[data-cloud-jobs]').textContent=e.message;nextRefresh=10000;}finally{polling=false;jobTimer=setTimeout(loadJobs,nextRefresh);}
@@ -144,11 +167,11 @@
   const text=action==='shutdown'?'关机后自动连接会暂停，开机或恢复连接可解除。':action==='reboot'?'重启后自动连接暂停 5 分钟。':'';
   if(!confirm(`确认对选中的 ${selected.size} 台云机执行${labels[action]}？${text}同账号登录/时长任务会中止，关机或重启可能丢失未保存的数据。`))return;
   const b=find('[data-cloud-power]');b.disabled=true;
-  try{const result=await request('/api/desktops/power',{action,targets:[...selected.values()]});notice(`任务 #${result.job_id} 已加入队列，请查看下方逐台结果`);selected.clear();render();void loadJobs();setTimeout(loadJobs,500);}catch(e){notice(e.message);}finally{b.disabled=false;}
+  try{const result=await request('/api/desktops/power',{action,targets:[...selected.values()]});notice(`任务 #${result.job_id} 已加入队列，请查看下方逐台结果`);holdRevision++;selected.clear();render();void loadJobs();setTimeout(loadJobs,500);}catch(e){notice(e.message);}finally{b.disabled=false;}
  });
  find('[data-cloud-refresh]').addEventListener('click',refresh);
  find('[data-cloud-account]').addEventListener('change',()=>{selected.clear();page=1;render();});find('[data-cloud-search]').addEventListener('input',()=>{selected.clear();page=1;render();});
  find('[data-cloud-select-all]').addEventListener('change',e=>{for(const d of filtered().filter(d=>!d.forbidden)){if(e.target.checked)selected.set(key(d),{account_id:d.account_id,desktop_id:d.id});else selected.delete(key(d));}render();});
  find('[data-cloud-prev]').addEventListener('click',()=>{page--;render();});find('[data-cloud-next]').addEventListener('click',()=>{page++;render();});
- void refresh();void loadJobs();
+ void refresh();void loadJobs();holdTimer=setTimeout(syncHolds,5000);
 })();

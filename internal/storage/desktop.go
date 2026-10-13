@@ -11,10 +11,11 @@ type PowerTarget struct {
 }
 type PowerItem struct {
 	PowerTarget
-	Name     string `json:"name"`
-	Status   string `json:"status"`
-	Message  string `json:"message"`
-	Position int    `json:"position"`
+	AccountName string `json:"account_name"`
+	Name        string `json:"name"`
+	Status      string `json:"status"`
+	Message     string `json:"message"`
+	Position    int    `json:"position"`
 }
 type PowerJob struct {
 	ID        int64       `json:"id"`
@@ -51,7 +52,7 @@ func (s *Store) PowerJob(id int64) (PowerJob, error) {
 	if err != nil {
 		return j, err
 	}
-	rows, err := s.DB.Query("SELECT position,account_id,desktop_id,name,status,message FROM power_items WHERE job_id=? ORDER BY position", id)
+	rows, err := s.DB.Query("SELECT p.position,p.account_id,p.desktop_id,p.name,p.status,p.message,COALESCE(a.name,'') FROM power_items p LEFT JOIN accounts a ON a.id=p.account_id WHERE p.job_id=? ORDER BY p.position", id)
 	if err != nil {
 		return j, err
 	}
@@ -59,7 +60,7 @@ func (s *Store) PowerJob(id int64) (PowerJob, error) {
 	j.Items = []PowerItem{}
 	for rows.Next() {
 		var v PowerItem
-		if err := rows.Scan(&v.Position, &v.AccountID, &v.DesktopID, &v.Name, &v.Status, &v.Message); err != nil {
+		if err := rows.Scan(&v.Position, &v.AccountID, &v.DesktopID, &v.Name, &v.Status, &v.Message, &v.AccountName); err != nil {
 			return j, err
 		}
 		j.Items = append(j.Items, v)

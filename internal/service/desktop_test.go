@@ -154,6 +154,45 @@ func TestBrowserDesktopChecksOwnershipAndReturnsOnlyOfficialURL(t *testing.T) {
 	}
 }
 
+func TestAutomaticBrowserResumePreservesManualPowerHold(t *testing.T) {
+	m, id := desktopManagerFixture(t)
+	target := storage.PowerTarget{AccountID: id, DesktopID: "123"}
+	if err := m.store.SetDesktopHold(target, time.Now().Add(time.Minute).Unix(), desktopBrowserHoldReason); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.RenewDesktopBrowser(target); err != nil {
+		t.Fatal(err)
+	}
+	until, _, _ := m.store.DesktopHoldSnapshot(target)
+	if until < time.Now().Add(140*time.Second).Unix() {
+		t.Fatal("browser lease not renewed")
+	}
+	m.mu.Lock()
+	m.powerActive = 1
+	m.mu.Unlock()
+	if err := m.ResumeDesktopBrowser(target); err == nil {
+		t.Fatal("resume during power operation")
+	}
+	m.mu.Lock()
+	m.powerActive = 0
+	m.mu.Unlock()
+	if err := m.ResumeDesktopBrowser(target); err != nil {
+		t.Fatal(err)
+	}
+	if hold, _ := m.store.DesktopHold(target); hold != "" {
+		t.Fatal("browser hold retained", hold)
+	}
+	m.store.SetDesktopHold(target, 0, "手动关机，自动连接已暂停")
+	m.RenewDesktopBrowser(target)
+	if err := m.ResumeDesktopBrowser(target); err != nil {
+		t.Fatal(err)
+	}
+	until, reason, _ := m.store.DesktopHoldSnapshot(target)
+	if until != 0 || reason != "手动关机，自动连接已暂停" {
+		t.Fatal("manual shutdown changed", until, reason)
+	}
+}
+
 func TestDesktopDetailsChecksOwnershipAndExposesAllowlistedFields(t *testing.T) {
 	m, id := desktopManagerFixture(t)
 	previous := http.DefaultTransport
@@ -177,5 +216,21 @@ func TestDesktopDetailsChecksOwnershipAndExposesAllowlistedFields(t *testing.T) 
 	raw, err := json.Marshal(details)
 	if err != nil || strings.Contains(string(raw), "sensitive-field") || strings.Contains(string(raw), "secretKey") {
 		t.Fatal("unexpected sensitive field", err)
+	}
+}
+
+func TestBrowserLoginDoesNotSkipAdditionalVerification(t *testing.T) {
+	m, id := desktopManagerFixture(t)
+	m.saveProfile(id, ctyun.Profile{UserID: 1, SecretKey: "secret", BondedDevice: true, NeedSmsValidate: true})
+	previous := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = previous })
+	http.DefaultTransport = desktopTransport(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"code":0,"data":{"desktopList":[{"desktopId":"123"}]}}`))}, nil
+	})
+	if _, err := m.DesktopBrowserLogin(context.Background(), storage.PowerTarget{AccountID: id, DesktopID: "123"}); err == nil {
+		t.Fatal("additional verification bypassed")
+	}
+	if m.desktopHeld(id, "123") {
+		t.Fatal("rejected login paused desktop")
 	}
 }
