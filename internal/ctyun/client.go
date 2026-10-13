@@ -36,17 +36,23 @@ type Profile struct {
 	BondedDevice                                                    bool
 }
 type Desktop struct {
-	ObjectType    int    `json:"objType"`
-	ObjectID      string `json:"objId"`
-	ObjectName    string `json:"objName"`
-	DesktopID     string `json:"desktopId"`
-	DesktopName   string `json:"desktopName"`
-	ProdInstID    string `json:"prodInstId"`
-	PoolID        string `json:"poolId"`
-	PoolName      string `json:"poolName"`
-	UseStatus     string `json:"useStatus"`
-	UseStatusText string `json:"useStatusText"`
-	Forbidden     bool   `json:"forbiddenConnect"`
+	ObjectType    int      `json:"objType"`
+	ObjectID      string   `json:"objId"`
+	ObjectName    string   `json:"objName"`
+	DesktopID     string   `json:"desktopId"`
+	DesktopName   string   `json:"desktopName"`
+	ProdInstID    string   `json:"prodInstId"`
+	PoolID        string   `json:"poolId"`
+	PoolName      string   `json:"poolName"`
+	UseStatus     string   `json:"useStatus"`
+	UseStatusText string   `json:"useStatusText"`
+	Forbidden     bool     `json:"forbiddenConnect"`
+	FlavorName    string   `json:"flavorName"`
+	ProductGroup  string   `json:"prodGroupName"`
+	ImageName     string   `json:"imageName"`
+	DesktopCode   string   `json:"desktopCode"`
+	CPUCore       *float64 `json:"cpuCore"`
+	MemoryGB      *float64 `json:"memoryGB"`
 }
 
 func (d Desktop) ID() string {
@@ -387,10 +393,16 @@ func (c *Client) ListDesktops(ctx context.Context) ([]Desktop, error) {
 	if e := c.EnsureLogin(ctx); e != nil {
 		return nil, e
 	}
-	h, _ := c.signed(PCVersion, false)
+	h, headerErr := c.signed(PCVersion, false)
+	if headerErr != nil {
+		return nil, headerErr
+	}
 	h.Set("Content-Type", "application/json")
 	var d struct{ DesktopList, DesktopPoolList, PreemptionDesktopList []Desktop }
-	e := c.do(ctx, "POST", PCOrigin+"/api/desktop/client/pageDesktop", strings.NewReader(`{"getCnt":20,"desktopTypes":["1","2001","2002","2003"],"sortType":"createTimeV1"}`), h, &d)
+	e := c.do(ctx, "POST", PCOrigin+"/api/desktop/client/pageDesktop", strings.NewReader(`{"getCnt":50,"desktopTypes":["1","2001","2002","2003"],"sortType":"createTimeV1"}`), h, &d)
+	if e != nil {
+		return nil, e
+	}
 	for i := range d.DesktopPoolList {
 		if d.DesktopPoolList[i].ObjectType == 0 {
 			d.DesktopPoolList[i].ObjectType = 1

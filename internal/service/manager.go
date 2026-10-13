@@ -40,35 +40,41 @@ type VerifySession struct {
 	Expires time.Time
 }
 type Manager struct {
-	store         *storage.Store
-	credentialKey []byte
-	dataDir, ocr  string
-	logger        *log.Logger
-	logFile       *os.File
-	logMu         sync.Mutex
-	logCloseOnce  sync.Once
-	wg            sync.WaitGroup
-	launchMu      sync.Mutex
-	closing       bool
-	mu            sync.RWMutex
-	clients       map[int64]*clientState
-	nativeClients map[int64]*ctyun.NativeClient
-	active        map[int64]running
-	starting      map[string]struct{}
-	verify        map[int64]VerifySession
-	ctx           context.Context
-	cancel        context.CancelFunc
-	started       time.Time
-	maintenance   bool
+	store            *storage.Store
+	credentialKey    []byte
+	dataDir, ocr     string
+	logger           *log.Logger
+	logFile          *os.File
+	logMu            sync.Mutex
+	logCloseOnce     sync.Once
+	wg               sync.WaitGroup
+	launchMu         sync.Mutex
+	closing          bool
+	mu               sync.RWMutex
+	clients          map[int64]*clientState
+	nativeClients    map[int64]*ctyun.NativeClient
+	active           map[int64]running
+	starting         map[string]struct{}
+	verify           map[int64]VerifySession
+	ctx              context.Context
+	cancel           context.CancelFunc
+	started          time.Time
+	maintenance      bool
+	powerActive      int64
+	powerAccounts    map[int64]bool
+	desktopControlMu sync.Mutex
+	desktopReadSlots chan struct{}
 }
 
 func New(store *storage.Store, key []byte, dataDir, ocr string) *Manager {
 	ctx, cancel := context.WithCancel(context.Background())
 	_ = os.MkdirAll(filepath.Join(dataDir, "logs"), 0750)
 	f, _ := os.OpenFile(filepath.Join(dataDir, "logs", "ctyun.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0640)
-	return &Manager{store: store, credentialKey: key, dataDir: dataDir, ocr: ocr, logger: log.New(f, "", log.LstdFlags), logFile: f, clients: map[int64]*clientState{}, nativeClients: map[int64]*ctyun.NativeClient{}, active: map[int64]running{}, starting: map[string]struct{}{}, verify: map[int64]VerifySession{}, ctx: ctx, cancel: cancel, started: time.Now()}
+	return &Manager{store: store, credentialKey: key, dataDir: dataDir, ocr: ocr, logger: log.New(f, "", log.LstdFlags), logFile: f, clients: map[int64]*clientState{}, nativeClients: map[int64]*ctyun.NativeClient{}, active: map[int64]running{}, starting: map[string]struct{}{}, verify: map[int64]VerifySession{}, ctx: ctx, cancel: cancel, started: time.Now(), desktopReadSlots: make(chan struct{}, 3)}
 }
 func (m *Manager) Start() {
+	_ = m.store.InterruptPowerJobs()
+	m.launch(m.desktopHoldScheduler)
 	m.RestartKeepalive()
 	_ = m.CleanupExpiredLogs()
 	m.launch(m.scheduler)
@@ -425,7 +431,7 @@ func (m *Manager) reconcileKeepalive(now time.Time) {
 func (m *Manager) reconcileAccountKeepalive(a storage.Account, now time.Time) {
 	want := a.DeviceStatus != "pending" && a.KeepaliveActiveAt(now)
 	m.mu.RLock()
-	if m.maintenance {
+	if m.maintenance || m.powerAccounts[a.ID] {
 		m.mu.RUnlock()
 		return
 	}
@@ -539,6 +545,9 @@ func (m *Manager) startAccount(a storage.Account) {
 	issues := 0
 	m.setState(a.ID, c, "正在建立保活", 0, ctx, cancel)
 	for _, d := range desktops {
+		if m.desktopHeld(a.ID, d.ID()) {
+			continue
+		}
 		if d.Forbidden {
 			forbidden++
 			m.logf("[%s/%s] 平台禁止连接，已跳过", a.Name, d.Name())
@@ -875,6 +884,10 @@ func (m *Manager) StartTask(id int64, typ, trigger string) (int64, error) {
 	}
 	key := fmt.Sprintf("%d:%s", id, typ)
 	m.mu.Lock()
+	if m.powerAccounts[id] && (typ == "login" || typ == "pc") {
+		m.mu.Unlock()
+		return 0, errors.New("电源任务正在执行，请稍后运行桌面任务")
+	}
 	if m.maintenance {
 		m.mu.Unlock()
 		return 0, errors.New("系统正在准备更新，暂不接受新任务")
@@ -920,7 +933,7 @@ func (m *Manager) StartTask(id int64, typ, trigger string) (int64, error) {
 	ctx, cancel := context.WithCancel(m.ctx)
 	m.mu.Lock()
 	delete(m.starting, key)
-	if m.maintenance {
+	if m.maintenance || (m.powerAccounts[id] && (typ == "login" || typ == "pc")) {
 		m.mu.Unlock()
 		cancel()
 		_ = m.store.UpdateRun(runID, "interrupted", "系统正在准备更新")
@@ -1106,6 +1119,9 @@ func (m *Manager) activateDesktopLogin(ctx context.Context, a storage.Account, c
 	liveSession := m.clients[a.ID] != nil && m.clients[a.ID].workers > 0
 	m.mu.RUnlock()
 	for _, d := range desktops {
+		if m.desktopHeld(a.ID, d.ID()) {
+			continue
+		}
 		if d.Forbidden {
 			continue
 		}
@@ -1234,6 +1250,9 @@ func (m *Manager) runUsage(ctx context.Context, a storage.Account, c *ctyun.Clie
 		return e
 	}
 	for _, desktop := range desktops {
+		if m.desktopHeld(a.ID, desktop.ID()) {
+			continue
+		}
 		if desktop.Forbidden {
 			continue
 		}
@@ -1370,6 +1389,10 @@ func (m *Manager) BlockingForUpdate() []string {
 // waits for short jobs and rejects updates while usage/redeem work is active.
 func (m *Manager) PrepareForUpdate(ctx context.Context) error {
 	m.mu.Lock()
+	if m.powerActive != 0 {
+		m.mu.Unlock()
+		return errors.New("批量电源操作正在执行，请等待任务结束")
+	}
 	if m.maintenance {
 		m.mu.Unlock()
 		return errors.New("系统已处于更新维护状态")
