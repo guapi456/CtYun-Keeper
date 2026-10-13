@@ -22,6 +22,10 @@
 
 ![任务中心](docs/screenshots/03-tasks.png)
 
+### 云机管理
+
+![云机管理](docs/screenshots/05-desktops.png)
+
 ### 系统设置
 
 ![系统设置](docs/screenshots/04-settings.png)
