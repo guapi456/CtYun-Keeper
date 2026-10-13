@@ -244,6 +244,37 @@ func TestRestartedServerShowsResultAndCurrentVersion(t *testing.T) {
 	}
 }
 
+func TestContainerUpgradeNoticeIsPersistentAndVersionSpecific(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "db")
+	store, err := storage.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{store: store, version: "2.1.0"}
+	for _, image := range []string{"2.1.0", "2.2.0", "unknown"} {
+		if s.takeContainerUpgradeNotice(image) {
+			t.Fatal("not an in-container upgrade", image)
+		}
+	}
+	if !s.takeContainerUpgradeNotice("2.0.0") || s.takeContainerUpgradeNotice("2.0.0") {
+		t.Fatal("notice not shown exactly once")
+	}
+	store.Close()
+	store, err = storage.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	s = &Server{store: store, version: "v2.1.0"}
+	if s.takeContainerUpgradeNotice("2.0.0") {
+		t.Fatal("restart repeated notice")
+	}
+	s.version = "2.2.0"
+	if !s.takeContainerUpgradeNotice("2.0.0") || s.takeContainerUpgradeNotice("2.0.0") {
+		t.Fatal("new upgrade must have its own one-time notice")
+	}
+}
+
 func TestDevVersionUsesSavedFormalUpdateState(t *testing.T) {
 	store, err := storage.Open(filepath.Join(t.TempDir(), "db"))
 	if err != nil {

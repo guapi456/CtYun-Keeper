@@ -358,7 +358,7 @@ func (s *Server) page(w http.ResponseWriter, r *http.Request, title, content str
 		}
 		nav = `<aside class="sidebar" id="sidebar"><a class="brand" href="/"><span class="brand-mark material-symbols-rounded">cloud_sync</span><span><strong>CtYunKeeper</strong><small>云电脑管理台</small></span></a><nav><span class="nav-section">管理</span><a class="` + navActive(r.URL.Path, "/") + `" href="/"><span class="material-symbols-rounded">dashboard</span><span>仪表盘</span></a><a class="` + navActive(r.URL.Path, "/accounts") + `" href="/accounts"><span class="material-symbols-rounded">manage_accounts</span><span>账号管理</span></a><a class="` + navActive(r.URL.Path, "/tasks") + `" href="/tasks"><span class="material-symbols-rounded">schedule</span><span>任务中心</span></a><a class="` + navActive(r.URL.Path, "/desktops") + `" href="/desktops"><span class="material-symbols-rounded">deployed_code</span><span>云机管理</span></a><span class="nav-section">系统</span><a class="` + navActive(r.URL.Path, "/logs") + `" href="/logs"><span class="material-symbols-rounded">terminal</span><span>日志中心</span></a><a class="` + navActive(r.URL.Path, "/settings") + `" href="/settings"><span class="material-symbols-rounded">settings</span><span>系统设置</span></a></nav><div class="sidebar-foot"><span class="material-symbols-rounded">deployed_code</span><span><span class="sidebar-product-title"><strong>CtYunKeeper</strong>` + s.updateAvailableBadgeSlot("sidebar") + `</span><small>版本 v` + esc(s.version) + `</small></span></div></aside><header class="topbar"><button class="icon-button sidebar-toggle" type="button"><span class="material-symbols-rounded">menu</span></button><strong>天翼云电脑自动化管理</strong><div class="topbar-actions"><button class="icon-button theme-toggle" type="button" data-theme-toggle aria-label="切换网页主题"><span class="local-icon theme-icon-moon" aria-hidden="true"></span><span class="local-icon theme-icon-sun" aria-hidden="true"></span></button><a class="icon-button" href="/logs" aria-label="查看日志"><span class="material-symbols-rounded">notifications</span></a><form method="post" action="/ctyun/restart"><input type="hidden" name="csrf_token" value="` + esc(token) + `"><button class="icon-button" aria-label="重新加载保活"><span class="material-symbols-rounded">refresh</span></button></form>` + logoutAction + `</div></header><button class="sidebar-backdrop" type="button"></button>`
 	}
-	fmt.Fprintf(w, "<!doctype html><html lang=zh-CN><head><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><meta name=color-scheme content='light dark'><meta name=csrf-token content='%s'><title>%s · CtYunKeeper</title><script src='/static/theme.js?v=%s-ui61'></script><link rel=stylesheet href='/static/app.css?v=%s-ui61'><script src='/static/htmx.min.js' defer></script><script src='/static/app.js?v=%s-ui61' defer></script><script src='/static/desktops.js?v=ui61' defer></script></head><body data-authenticated='%t' data-app-version='%s'>%s<main class='%s'>%s%s</main></body></html>", esc(token), esc(title), esc(s.version), esc(s.version), esc(s.version), auth, esc(s.version), nav, mainClass, flash, content)
+	fmt.Fprintf(w, "<!doctype html><html lang=zh-CN><head><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><meta name=color-scheme content='light dark'><meta name=csrf-token content='%s'><title>%s · CtYunKeeper</title><script src='/static/theme.js?v=%s-ui61'></script><link rel=stylesheet href='/static/app.css?v=%s-ui62'><script src='/static/htmx.min.js' defer></script><script src='/static/app.js?v=%s-ui61' defer></script><script src='/static/desktops.js?v=ui61' defer></script></head><body data-authenticated='%t' data-app-version='%s'>%s<main class='%s'>%s%s</main></body></html>", esc(token), esc(title), esc(s.version), esc(s.version), esc(s.version), auth, esc(s.version), nav, mainClass, flash, content)
 }
 func redirect(w http.ResponseWriter, r *http.Request, path, msg string, isErr bool) {
 	key := "notice"
@@ -1528,10 +1528,8 @@ func (s *Server) deploymentCard(messages ...updateCardMessage) string {
 		if notice := os.Getenv("CTYUN_IMAGE_UPDATE_REQUIRED"); notice != "" {
 			messages = append(messages, updateCardMessage{Level: "warning", Text: notice})
 		}
-		if current, ok := update.ParseSemVer(s.version); ok {
-			if imageVersion, valid := update.ParseSemVer(platform.ImageVersion); valid && current.Compare(imageVersion) > 0 {
-				messages = append(messages, updateCardMessage{Level: "neutral", Text: "程序已通过容器内更新升级"})
-			}
+		if s.takeContainerUpgradeNotice(platform.ImageVersion) {
+			messages = append(messages, updateCardMessage{Level: "neutral", Text: "程序已通过容器内更新升级"})
 		}
 	}
 	statusMarkup := renderUpdateMessageQueue(messages)
@@ -1547,6 +1545,21 @@ func (s *Server) deploymentCard(messages ...updateCardMessage) string {
 		extraFacts = fmt.Sprintf(`<div><dt>Launcher 版本</dt><dd>v%s</dd></div><div><dt>Docker 镜像版本</dt><dd>v%s</dd></div>`, esc(orDash(platform.LauncherVersion)), esc(orDash(platform.ImageVersion)))
 	}
 	return fmt.Sprintf(`<article class="panel info-panel settings-card deployment-settings-card"><div class="settings-card-head deployment-settings-head"><span class="panel-icon material-symbols-rounded">deployed_code</span><div><h2>部署信息</h2><small>CtYunKeeper 当前运行环境</small></div>%s</div><dl class=deployment-facts><div><dt>当前版本</dt><dd>v%s</dd></div><div><dt>运行平台</dt><dd>%s</dd></div><div><dt>系统架构</dt><dd>%s</dd></div>%s<div><dt>最新版本</dt><dd>%s</dd></div></dl>%s%s<div id=update-progress hx-get=/partials/update-status hx-trigger="load, every 2s" hx-swap=innerHTML></div><form id=update-proxy-form class=update-proxy-form method=post action=/settings/update/proxy><input type=hidden name=csrf_token value="{{CSRF}}"><label>GitHub 代理<input name=github_proxy value="%s" placeholder="留空使用 GitHub 直连"></label><button class=secondary type=submit>保存代理</button></form><div class=deployment-actions><form method=post action=/settings/update/check><input type=hidden name=csrf_token value="{{CSRF}}"><button class=primary>检测更新</button></form>%s</div></article>`, projectMarkup, esc(s.version), runMode, platform.OS+"/"+platform.Arch, extraFacts, latestText, statusMarkup, releaseMarkup, esc(proxyValue), installMarkup)
+}
+
+func (s *Server) takeContainerUpgradeNotice(imageVersion string) bool {
+	current, ok := update.ParseSemVer(s.version)
+	image, valid := update.ParseSemVer(imageVersion)
+	if !ok || !valid || current.Compare(image) <= 0 {
+		return false
+	}
+	// Persist the acknowledgement so rendering or restarting cannot repeat the same version's notice.
+	result, err := s.store.DB.Exec("INSERT OR IGNORE INTO settings(key,value,updated_at) VALUES(?,?,?)", "container_upgrade_notice_seen:"+current.String(), "1", storage.Now())
+	if err != nil {
+		return false
+	}
+	changed, err := result.RowsAffected()
+	return err == nil && changed > 0
 }
 
 func renderUpdateMessageQueue(messages []updateCardMessage) string {
